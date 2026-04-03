@@ -44,6 +44,11 @@ def analyze_screen_distance(frame: np.ndarray, width: int, height: int) -> dict:
     ratio_pct = (area / total_area) * 100.0
     screen_ratio = int(round(np.clip(ratio_pct, 0.0, 100.0)))
 
+    # Bright blob area vs distance is inverted for this camera/FOV: a larger
+    # segmented region correlates with farther viewing, not closer. Use the
+    # complement so distance_cm and categories match physical range.
+    close_signal = 100.0 - ratio_pct
+
     x, y, bw, bh = cv2.boundingRect(largest)
     short_side = min(bw, bh)
     long_side = max(bw, bh)
@@ -51,12 +56,12 @@ def analyze_screen_distance(frame: np.ndarray, width: int, height: int) -> dict:
     rectangular = 1.2 <= aspect <= 2.5
     confidence = 0.80 if rectangular else 0.50
 
-    distance_cm = float(np.clip(120.0 - ratio_pct * 1.2, 15.0, 120.0))
+    distance_cm = float(np.clip(120.0 - close_signal * 1.2, 15.0, 120.0))
     distance_cm = round(distance_cm, 1)
 
-    if ratio_pct >= 70.0:
+    if close_signal >= 70.0:
         category = "TOO_CLOSE"
-    elif ratio_pct >= 25.0:
+    elif close_signal >= 25.0:
         category = "OK"
     else:
         category = "FAR"

@@ -1,9 +1,9 @@
 """
 Screen vs ambient brightness from an 80×60 grayscale frame (uint8, row-major).
 
-Zones match the product spec:
-- Screen: centre 50% — rows 15–44, cols 20–59 (0-based)
-- Ambient: 5-pixel border ring (all pixels within 5 px of any edge)
+- Screen: centre 50% (same relative box for any H×W).
+- Ambient: darkest of four corner patches (bezel / wall / off-screen), not the
+  full border ring — the ring often matches the LCD and kills contrast.
 """
 
 from __future__ import annotations
@@ -38,24 +38,29 @@ def analyze_brightness(frame: np.ndarray, width: int, height: int) -> dict:
 
     f = frame.astype(np.float64)
 
-    # Centre 50%: rows 15–44, cols 20–59 for 60×80
+    # Centre 50%
     r0, r1 = h // 4, h - h // 4
     c0, c1 = w // 4, w - w // 4
     screen_roi = f[r0:r1, c0:c1]
 
-    border = 5
-    top = f[:border, :]
-    bottom = f[h - border :, :]
-    left_mid = f[border : h - border, :border]
-    right_mid = f[border : h - border, w - border :]
-    ambient_parts = [top.reshape(-1), bottom.reshape(-1), left_mid.reshape(-1), right_mid.reshape(-1)]
-    ambient_px = np.concatenate(ambient_parts) if ambient_parts else np.array([], dtype=np.float64)
+    # Corner patches: more likely off-LCD than a thin border ring (which samples
+    # the same panel and yields ~0 contrast vs centre).
+    ch = max(3, min(h // 6, h // 2))
+    cw = max(3, min(w // 6, w // 2))
+    corner_blocks = (
+        f[:ch, :cw],
+        f[:ch, w - cw :],
+        f[h - ch :, :cw],
+        f[h - ch :, w - cw :],
+    )
+    corner_means = [float(np.mean(block)) for block in corner_blocks if block.size]
+    ambient_sample = min(corner_means) if corner_means else 0.0
 
     def to_pct(mean_val: float) -> float:
         return round(float(np.clip(mean_val / 255.0 * 100.0, 0.0, 100.0)), 1)
 
     screen_br = to_pct(float(np.mean(screen_roi))) if screen_roi.size else 0.0
-    ambient_br = to_pct(float(np.mean(ambient_px))) if ambient_px.size else 0.0
+    ambient_br = to_pct(ambient_sample)
     contrast = round(abs(screen_br - ambient_br), 1)
 
     if screen_br >= 70.0 and ambient_br >= 70.0:
