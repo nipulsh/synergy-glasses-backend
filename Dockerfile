@@ -14,9 +14,12 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
-RUN chmod +x /app/docker-entrypoint.sh
+# Strip Windows CRLF — otherwise the kernel reports "no such file or directory"
+# when exec'ing the shebang (looks for /bin/sh\r). See Render troubleshooting deploys.
+RUN sed -i 's/\r$//' /app/docker-entrypoint.sh && chmod +x /app/docker-entrypoint.sh
 
 EXPOSE 8000
-ENTRYPOINT ["/app/docker-entrypoint.sh"]
-# Render/Railway set PORT; Fly uses internal_port → keep default 8000 when unset.
+# Invoke via sh so a bad shebang line cannot break startup after sed fix above.
+ENTRYPOINT ["/bin/sh", "/app/docker-entrypoint.sh"]
+# Many hosts set PORT via env; default 8000 when unset.
 CMD ["sh", "-c", "uvicorn main:app --host 0.0.0.0 --port ${PORT:-8000}"]
