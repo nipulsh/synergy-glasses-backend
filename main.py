@@ -4,8 +4,9 @@ OcuSmart Distance API
 Endpoints
 ---------
 GET  /api/health          → {"status": "ok", "model_loaded": bool}
-POST /api/distance        → run inference on a received frame
-POST /api/analyze         → distance + brightness from one frame
+POST /api/distance        → distance + brightness (same frame)
+POST /api/analyze         → distance + brightness; optional ?include_objects=1
+POST /api/objects         → laptop/object classifier (objects_model.tflite)
 POST /api/collect         → save labeled frame to training dataset
 GET  /api/stats           → dataset frame counts per distance class
 
@@ -24,13 +25,14 @@ import base64
 from pathlib import Path
 
 import numpy as np
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
 import brightness as bright
 import collector as col
 import inference as inf
+import object_inference as obj_inf
 
 app = FastAPI(
     title="OcuSmart Distance API",
@@ -70,23 +72,53 @@ def health():
         "status": "ok",
         "model_loaded": inf._interp is not None,
         "model_path": str(inf.MODEL_PATH) if inf.MODEL_PATH.exists() else None,
+        "objects_model_loaded": obj_inf.objects_model_loaded(),
+        "objects_model_path": str(obj_inf.OBJECTS_MODEL_PATH)
+        if obj_inf.OBJECTS_MODEL_PATH.exists()
+        else None,
     }
 
 
 @app.post("/api/distance")
 def distance(req: FrameRequest):
-    """Run distance inference on the supplied grayscale frame."""
-    frame = _decode_frame(req)
-    return inf.predict_distance(frame, req.width, req.height)
-
-
-@app.post("/api/analyze")
-def analyze(req: FrameRequest):
     """Distance (ML or heuristic) plus screen/ambient brightness from one frame."""
     frame = _decode_frame(req)
     dist = inf.predict_distance(frame, req.width, req.height)
     br = bright.analyze_brightness(frame, req.width, req.height)
     return {**dist, **br}
+
+
+@app.post("/api/analyze")
+def analyze(
+    req: FrameRequest,
+    include_objects: bool = Query(
+        False,
+        description="If true, add `objects` key when objects_model.tflite is loaded",
+    ),
+):
+    """Distance (ML or heuristic) plus screen/ambient brightness from one frame."""
+    frame = _decode_frame(req)
+    dist = inf.predict_distance(frame, req.width, req.height)
+    br = bright.analyze_brightness(frame, req.width, req.height)
+    out = {**dist, **br}
+    if include_objects:
+        obj = obj_inf.predict_objects(frame)
+        if obj is not None:
+            out["objects"] = obj
+    return out
+
+
+@app.post("/api/objects")
+def classify_objects(req: FrameRequest):
+    """Run the laptop/object TFLite classifier (grayscale frame → RGB at model resolution)."""
+    frame = _decode_frame(req)
+    result = obj_inf.predict_objects(frame)
+    if result is None:
+        raise HTTPException(
+            status_code=503,
+            detail="objects model not loaded (missing models/objects_model.tflite)",
+        )
+    return result
 
 
 @app.post("/api/collect")
@@ -105,9 +137,16 @@ def stats():
 
 @app.post("/api/reload")
 def reload():
-    """Hot-reload the TFLite model after training without restarting the server."""
+    """Hot-reload distance TFLite (models/model.tflite)."""
     ok = inf.reload_model()
     return {"reloaded": ok, "model_loaded": inf._interp is not None}
+
+
+@app.post("/api/reload-objects")
+def reload_objects():
+    """Hot-reload objects TFLite (models/objects_model.tflite) after train_objects.py."""
+    ok = obj_inf.reload_objects_model()
+    return {"reloaded": ok, "objects_model_loaded": obj_inf.objects_model_loaded()}
 
 
 # ---------------------------------------------------------------------------

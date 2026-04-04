@@ -1,0 +1,4 @@
+# Training-only deps (not needed for the FastAPI Docker image).
+# pip install -r requirements-train.txt
+tensorflow>=2.16
+kagglehub>=0.3.0
