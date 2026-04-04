@@ -39,7 +39,7 @@ IMG_W, IMG_H = 96, 96        # input size for MobileNetV2
 BATCH_SIZE   = 32
 EPOCHS       = 30
 VAL_SPLIT    = 0.2
-REGRESSION   = False         # True = predict cm directly; False = 3-class
+REGRESSION   = False         # True = predict cm directly (often smoother); False = 3-class
 
 # Distance → class label mapping (for classification)
 def _to_class(cm: int) -> int:
@@ -57,8 +57,7 @@ def _to_class(cm: int) -> int:
 def load_dataset():
     images, labels = [], []
 
-    if not DATASET_DIR.exists():
-        raise FileNotFoundError(f"Dataset directory not found: {DATASET_DIR}")
+    DATASET_DIR.mkdir(parents=True, exist_ok=True)
 
     for label_dir in sorted(DATASET_DIR.iterdir()):
         if not label_dir.is_dir():
@@ -80,7 +79,10 @@ def load_dataset():
             labels.append(cm if REGRESSION else _to_class(cm))
 
     if not images:
-        raise ValueError("No images found in dataset. Collect frames with the app first.")
+        raise ValueError(
+            f"No JPEGs under {DATASET_DIR.resolve()} in `{{N}}cm/` folders. "
+            "Use POST /api/collect or add images there, then run again."
+        )
 
     X = np.array(images)[..., np.newaxis]   # (N, H, W, 1)
     y = np.array(labels, dtype=np.float32)

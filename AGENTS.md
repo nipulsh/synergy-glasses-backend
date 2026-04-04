@@ -21,11 +21,16 @@ Branding in code: **OcuSmart Distance API** (`main.py`). Repository name: **syne
 | `main.py` | FastAPI app, routes, frame decode (base64 → `uint8` H×W). |
 | `inference.py` | Load `models/model.tflite`; `predict_distance()`; `reload_model()`. |
 | `object_inference.py` | Load `models/objects_model.tflite` + `objects_class_names.json`; `predict_objects()`; `reload_objects_model()`. |
-| `screen_distance.py` | Fallback **edge_heuristic**: Otsu largest bright blob area% → `screen_ratio`; larger blob ⇒ lower `distance_cm` (closer). |
-| `brightness.py` | Screen-centre vs **darkest corner patches** (ambient) → `screenBr`, `ambientBr`, `contrast`, `brightnessAlert`. |
+| `laptop_scene.py` | Gate `/api/distance` and `/api/analyze` when **Roboflow workflow** (`LAPTOP_USE_ROBOFLOW_WORKFLOW`) and/or **`objects_model.tflite`** is active; strict pipeline: TFLite objects first when model present, bbox inverse-sqrt distance, bbox-split brightness, EMA smoothing. |
+| `temporal_smoothing.py` | Process-global **EMA** (default **α = 0.4**) on **`distance_cm`** and **`bbox_area_ratio_pct`** after raw bbox computation on the laptop-gated success path. |
+| `roboflow_workflow.py` | Optional **`InferenceHTTPClient`** singleton + **in-memory** image → workflow (`ROBOFLOW_*` env). Used only as **fallback** when the objects TFLite model is **not** loaded. Training uses `train_objects.py`, not this API. |
+| `screen_distance.py` | **edge_heuristic** (contour area%) when no distance TFLite; laptop-gated bbox path uses **inverse square-root** fill-ratio model (`DISTANCE_D_REF`, `DISTANCE_REF_RATIO_PCT`, clamps) via **`compute_distance_from_fill_ratio_pct`**. |
+| `brightness.py` | Centre vs corners heuristic; **`analyze_brightness_bbox`** (inside rect vs outside / corner fallback); **`pack_brightness`**. |
+| `brightness_inference.py` | Prefer **`models/brightness_model.tflite`** (`train_brightness.py`); else delegates to `brightness.py`. |
 | `collector.py` | Save labeled frames under `dataset/{N}cm/*.jpg`; `get_stats()`. |
-| `train.py` | MobileNetV2-based classifier (or regression if `REGRESSION=True`) → `models/model.tflite`. |
-| `train_objects.py` | Laptop dataset (Kaggle default or pickle) → `models/objects_model.tflite` (+ `.keras`, class names JSON). |
+| `train.py` | MobileNetV2 distance classifier (or `REGRESSION=True` for cm) → `models/model.tflite`. |
+| `train_brightness.py` | MobileNetV2 regressor (2× sigmoid) on `dataset/*cm/*.jpg` → `models/brightness_model.tflite`. |
+| `train_objects.py` | Kaggle, pickle, or **`--source folder --data-dir`** (e.g. Roboflow Classification export `train/`) → `models/objects_model.tflite` (+ `.keras`, class names JSON). |
 | `Dockerfile` / `docker-entrypoint.sh` | Production image; mount `/data` to persist `dataset/` and `models/` (symlinks created at container start). |
 
 ## HTTP API (`/api/*`)
@@ -40,21 +45,28 @@ All POST bodies that carry a frame use JSON:
 }
 ```
 
-- `GET /api/health` — `status`, `model_loaded`, `model_path`, `objects_model_loaded`, `objects_model_path`.
-- `POST /api/distance` — distance (`inference.predict_distance`) + brightness (`brightness.analyze_brightness`).
-- `POST /api/analyze` — distance + brightness; query `include_objects=1` adds `objects` when `objects_model.tflite` is loaded.
-- `POST /api/objects` — object/laptop classifier (`object_inference.predict_objects`); **503** if objects model missing.
+- `GET /api/health` — distance / objects / brightness model flags and paths (`*_model_loaded`, `*_model_path`); **`roboflow_workflow_gate`**, **`roboflow_workflow_configured`**.
+- `POST /api/distance` — If **Roboflow workflow gate** is on (see `.env.example`) **or** **`objects_model.tflite` is loaded**: laptop gate (`laptop_scene`). Not a laptop → **`{"laptop_detected": false}`** only (plus **`detection_source`** / **`detection_reliable`**). Laptop + bright screen blob → **`laptop_bbox`** distance + **`brightness_source: laptop_bbox`**. If **neither** Roboflow gate nor objects model: legacy distance + brightness (`tflite` \| `heuristic`).
+- `POST /api/analyze` — Same gating as `/api/distance`; `include_objects=1` adds **`laptop_top3`** (and **`laptop_source`** when Roboflow). Legacy path still adds **`objects`** when only TFLite is used. Responses include **`detection_source`** (`tflite` \| `roboflow` \| `heuristic` \| `none`) and **`detection_reliable`** where applicable.
+- `POST /api/objects` — object/laptop classifier (`object_inference.predict_objects`); **503** if objects model missing; includes **`detection_source`** / **`detection_reliable`**.
 - `POST /api/collect` — same as frame request plus `distance_cm` (5–200); saves to dataset (`collector.save_frame`).
 - `GET /api/stats` — dataset totals per class folder.
-- `POST /api/reload` — hot-reload distance TFLite.
+- `POST /api/reload` — hot-reload **distance** and **brightness** TFLite models.
 - `POST /api/reload-objects` — hot-reload `objects_model.tflite` after `train_objects.py`.
 
-CORS is currently **allow all** origins in `main.py`. `.env.example` documents `PORT` / `MODEL_PATH` / `CORS_ORIGINS`; the running app does **not** load `.env` by default — use env vars your host sets or extend the app if needed.
+CORS is currently **allow all** origins in `main.py`. `.env.example` documents `PORT` / `MODEL_PATH` / `CORS_ORIGINS` / laptop gate / **`ROBOFLOW_*`**; the running app does **not** load `.env` by default — use env vars your host sets or extend the app if needed.
 
 ## Inference behavior
 
+**Laptop gate** when **`LAPTOP_USE_ROBOFLOW_WORKFLOW=1`** plus `ROBOFLOW_API_KEY` / `ROBOFLOW_WORKSPACE` / `ROBOFLOW_WORKFLOW_ID`, and/or **`objects_model.tflite` is present**. **When the objects TFLite model is loaded**, **`object_inference`** is the **only** per-request laptop signal — **Roboflow is not called** (singleton client + in-memory image remain for **fallback** when the model file is absent but the workflow gate and credentials are set). Roboflow path needs **`inference-sdk`** (Python **&lt;3.13**). Workflow JSON is scanned for label/confidence pairs; labels matching **`ROBOFLOW_LAPTOP_LABELS`** (default `laptop`) set the score checked against **`LAPTOP_CONFIDENCE_MIN`** (default **0.4**, typically **0.35–0.45**). For TFLite, **`LAPTOP_CLASS_IDS`** / name hints apply as before. **`detection_reliable`**: heuristic → false; TFLite → true when confidence ≥ threshold; Roboflow → true when used. On the gated **success** path, distance/brightness TFLite heads are **not** used (bbox inverse-sqrt distance + bbox-split brightness + EMA); legacy path still uses distance/brightness models when no gate fires.
+
+**Training with a Roboflow Classification export:** unzip so you have `…/train/<ClassName>/*.jpg`, then `python train_objects.py --source folder --data-dir path/to/train` → `models/objects_model.tflite` for local inference without per-frame Roboflow calls.
+
+**Legacy (no Roboflow gate and no objects model):**
+
 1. If `models/model.tflite` loads: **source `tflite`**. Supports **regression** (single float → `distance_cm` clipped 10–120) or **3-class softmax** → mapped categories TOO_CLOSE / OK / FAR with representative cm values.
 2. Else: **source `edge_heuristic`** via `screen_distance.analyze_screen_distance` (includes `screen_ratio`).
+3. Brightness: if `models/brightness_model.tflite` loads, **source `tflite`** (regressed `screenBr` / `ambientBr`); else heuristic ROIs in `brightness.py`.
 
 Distance categories align with training: TOO_CLOSE &lt; 35 cm, OK 35–65 cm, FAR &gt; 65 cm (`inference.py`, `train.py`).
 
@@ -62,6 +74,7 @@ Distance categories align with training: TOO_CLOSE &lt; 35 cm, OK 35–65 cm, FA
 
 - Collection rounds labels to **nearest 5 cm** bin; images saved as JPEG upscaled to **160×120** (`collector.py`).
 - `train.py` reads `dataset/*cm/*.jpg`, resizes to **96×96** grayscale, exports quantized TFLite to `models/model.tflite`.
+- `train_objects.py --source folder --data-dir …` trains the laptop/object classifier from folder-per-class exports (including Roboflow Classification).
 - After deploy: call `POST /api/reload` or restart to pick up a new model.
 
 ## Deployment (no Fly.io config in repo)
@@ -86,6 +99,8 @@ Training (TensorFlow required):
 ```bash
 pip install "tensorflow>=2.16"
 python train.py
+# Objects / laptop classifier — in Explorer open the `train` folder, copy the address bar, paste inside quotes:
+python train_objects.py --source folder --data-dir "C:\Users\YourName\Downloads\YourRoboflowExport\train"
 ```
 
 ## Conventions for changes
@@ -111,3 +126,4 @@ python train.py
 - **Grayscale → RGB for MobileNet-style inputs:** The glasses payload stays single-channel; code **replicates gray to three channels** (`COLOR_GRAY2RGB` or equivalent) for 3-channel TFLite models — not true color capture.
 - **`train_objects.py`:** Default source is **kagglehub** (cached laptop image set under `data/images/c*/`); use **`requirements-train.txt`** for TF + kagglehub; ensure **`models/`** exists before `model.save` / TFLite export (Keras errors if the directory is missing).
 - **Object model domain:** Classifier was trained on **catalog-style** laptop photos; expect **weak transfer** to **80×60 wearable POV** until fine-tuned on glasses-like data.
+- **`temporal_smoothing`:** EMA state is **process-global**; multiple devices or clients hitting one server instance **share** the same smoother unless you key by client/session or call **`reset_smoothing_state`** where appropriate.

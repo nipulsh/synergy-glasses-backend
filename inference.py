@@ -21,7 +21,7 @@ import numpy as np
 import cv2
 from pathlib import Path
 
-from screen_distance import analyze_screen_distance
+from screen_distance import DISTANCE_CM_MAX, DISTANCE_CM_MIN, analyze_screen_distance
 
 MODEL_PATH = Path(__file__).parent / "models" / "model.tflite"
 
@@ -117,7 +117,7 @@ def _predict_tflite(frame: np.ndarray) -> dict:
 
     # Regression: single float → distance_cm
     if output.size == 1:
-        dist_cm = float(np.clip(output.flat[0], 10, 120))
+        dist_cm = float(np.clip(output.flat[0], DISTANCE_CM_MIN, DISTANCE_CM_MAX))
         return {
             "distance_cm": round(dist_cm, 1),
             "category": _cm_to_category(dist_cm),
@@ -131,8 +131,9 @@ def _predict_tflite(frame: np.ndarray) -> dict:
     cm_map = {"TOO_CLOSE": 25.0, "OK": 50.0, "FAR": 80.0}
     idx = int(np.argmax(probs))
     cat = classes[idx]
+    dist_cm = float(np.clip(cm_map[cat], DISTANCE_CM_MIN, DISTANCE_CM_MAX))
     return {
-        "distance_cm": cm_map[cat],
+        "distance_cm": round(dist_cm, 1),
         "category": cat,
         "confidence": round(float(probs[idx]), 3),
         "source": "tflite",

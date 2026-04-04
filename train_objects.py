@@ -9,20 +9,28 @@ Data sources
 
 2) **Pickle** — `X.pickle/X.pickle` + `X.pickle/y.pickle` (see `--source pickle`).
 
+3) **Folder** — local directory whose **immediate subfolders** are class names (e.g. Roboflow
+   **Classification** → Generate → download ZIP → unzip → point `--data-dir` at `train/` or the
+   folder that contains `Laptop/`, `Chair/`, …). Same layout as Kaggle `images/<class>/*`.
+
 Usage
 -----
     pip install "tensorflow>=2.16" kagglehub
     python train_objects.py              # Kaggle laptop dataset
     python train_objects.py --source pickle
+    python train_objects.py --source folder --data-dir "D:\\datasets\\roboflow\\train"
 
 Output: models/objects_model.tflite, models/objects_model.keras,
         models/objects_class_names.json
+
+Optional: set TRAIN_OBJECTS_EPOCHS=2 (or similar) for a quick local smoke test only.
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import os
 import pickle
 import random
 from pathlib import Path
@@ -43,12 +51,45 @@ CLASS_NAMES_OUT = Path(__file__).parent / "models" / "objects_class_names.json"
 
 IMG_SIZE = 160
 BATCH_SIZE = 16
-EPOCHS = 40
+# Override for quick smoke tests, e.g. TRAIN_OBJECTS_EPOCHS=2
+EPOCHS = max(1, int(os.environ.get("TRAIN_OBJECTS_EPOCHS", "40")))
 VAL_SPLIT = 0.2
 SEED = 42
 ALPHA = 0.35
 
 IMAGE_EXT = {".jpg", ".jpeg", ".png", ".webp", ".bmp"}
+
+
+def _dir_has_image(d: Path) -> bool:
+    try:
+        for f in d.iterdir():
+            if f.is_file() and f.suffix.lower() in IMAGE_EXT:
+                return True
+    except OSError:
+        pass
+    return False
+
+
+def _looks_like_doc_placeholder_path(path_str: str) -> bool:
+    """True if the user pasted an example path from the docs instead of a real folder."""
+    t = path_str.strip().lower().replace("/", "\\")
+    markers = (
+        "where_you_unzipped",
+        "your_export",
+        "path\\to\\train",
+        "replace_with",
+        "<your",
+        "paste-here",
+        "paste_full_path_here",
+        "example\\datasets",
+        "the_path_you_copied",
+        "your_actual_path",
+        "full_path_here",
+    )
+    if any(m in t for m in markers):
+        return True
+    # e.g. ...\synergy-glasses-backend\THE_PATH_YOU_COPIED
+    return Path(path_str.replace("\\", "/")).name.lower() == "the_path_you_copied"
 
 
 def _download_kaggle_dataset() -> Path:
@@ -72,6 +113,26 @@ def _sorted_class_names(images_dir: Path) -> list[str]:
     return sorted(dirs, key=sort_key)
 
 
+def _sorted_class_names_with_images(images_dir: Path) -> list[str]:
+    """
+    Subfolders that actually contain ≥1 image file, skipping hidden dirs (e.g. `.git`).
+    Must match what Keras image_dataset_from_directory indexes — do not pass unrelated folders.
+    """
+    names: list[str] = []
+    for p in images_dir.iterdir():
+        if not p.is_dir() or p.name.startswith("."):
+            continue
+        if _dir_has_image(p):
+            names.append(p.name)
+
+    def sort_key(name: str) -> tuple:
+        if len(name) > 1 and name[0] == "c" and name[1:].isdigit():
+            return (0, int(name[1:]))
+        return (1, name)
+
+    return sorted(names, key=sort_key)
+
+
 def _find_image_classification_root(dataset_path: Path) -> Path:
     """Find a directory whose immediate subfolders each hold images (class folders)."""
     candidates = [
@@ -86,13 +147,7 @@ def _find_image_classification_root(dataset_path: Path) -> Path:
         if len(subdirs) < 2:
             continue
 
-        def dir_has_image(d: Path) -> bool:
-            for f in d.iterdir():
-                if f.is_file() and f.suffix.lower() in IMAGE_EXT:
-                    return True
-            return False
-
-        if sum(1 for d in subdirs if dir_has_image(d)) >= 2:
+        if sum(1 for d in subdirs if _dir_has_image(d)) >= 2:
             return c
     raise FileNotFoundError(
         f"Could not find class folders with images under {dataset_path}. "
@@ -190,16 +245,38 @@ def export_tflite(model) -> None:
     converter = tf.lite.TFLiteConverter.from_keras_model(model)
     converter.optimizations = [tf.lite.Optimize.DEFAULT]
     MODEL_OUT.write_bytes(converter.convert())
-    print(f"[train_objects] TFLite → {MODEL_OUT} ({MODEL_OUT.stat().st_size // 1024} KB)")
+    print(f"[train_objects] TFLite -> {MODEL_OUT} ({MODEL_OUT.stat().st_size // 1024} KB)")
 
 
-def _train_kaggle():
+def _train_from_images_dir(images_dir: Path) -> None:
+    """Train from a directory of class subfolders (Kaggle layout, Roboflow export, etc.)."""
     import tensorflow as tf  # noqa: PLC0415
     from tensorflow.keras import layers  # noqa: PLC0415
 
-    root = _download_kaggle_dataset()
-    images_dir = _find_image_classification_root(root)
-    class_names_order = _sorted_class_names(images_dir)
+    images_dir = images_dir.resolve()
+    if not images_dir.exists():
+        hint = ""
+        if _looks_like_doc_placeholder_path(str(images_dir)):
+            hint = (
+                "\n  This path looks like a documentation placeholder. Do not copy example paths - "
+                "use File Explorer: open your unzipped Roboflow export, go into the `train` folder, "
+                "click the address bar, copy the full path, and pass that to --data-dir.\n"
+            )
+        raise FileNotFoundError(
+            f"Dataset path does not exist: {images_dir}{hint}"
+            "  The directory must exist and contain at least two class subfolders with images "
+            "(e.g. train/Laptop/*.jpg, train/Chair/*.jpg)."
+        )
+    if not images_dir.is_dir():
+        raise NotADirectoryError(f"Not a directory (maybe a file?): {images_dir}")
+
+    class_names_order = _sorted_class_names_with_images(images_dir)
+    if len(class_names_order) < 2:
+        raise ValueError(
+            f"{images_dir} needs at least two subfolders that each contain image files "
+            f"({', '.join(sorted(IMAGE_EXT))}). Hidden folders (names starting with '.') are ignored. "
+            "For Roboflow, point --data-dir at the `train` folder (e.g. Laptop/, Chair/), not the repo root."
+        )
 
     train_ds = tf.keras.utils.image_dataset_from_directory(
         images_dir,
@@ -224,7 +301,7 @@ def _train_kaggle():
 
     class_names = list(train_ds.class_names)
     num_classes = len(class_names)
-    print(f"[train_objects] Classes ({num_classes}): {class_names[:12]}{'…' if len(class_names) > 12 else ''}")
+    print(f"[train_objects] Classes ({num_classes}): {class_names[:12]}{'...' if len(class_names) > 12 else ''}")
 
     norm = layers.Rescaling(1.0 / 255.0)
 
@@ -247,7 +324,7 @@ def _train_kaggle():
         ),
     ]
 
-    print("[train_objects] Training (frozen backbone)…")
+    print("[train_objects] Training (frozen backbone)...")
     model.fit(
         train_ds,
         validation_data=val_ds,
@@ -256,7 +333,7 @@ def _train_kaggle():
         verbose=1,
     )
 
-    print("[train_objects] Fine-tuning (top MobileNet layers)…")
+    print("[train_objects] Fine-tuning (top MobileNet layers)...")
     base.trainable = True
     for layer in base.layers[:-24]:
         layer.trainable = False
@@ -278,21 +355,27 @@ def _train_kaggle():
     keras_path = MODEL_OUT.with_name("objects_model.keras")
     MODEL_OUT.parent.mkdir(parents=True, exist_ok=True)
     model.save(keras_path)
-    print(f"[train_objects] Keras → {keras_path}")
+    print(f"[train_objects] Keras -> {keras_path}")
     export_tflite(model)
 
     CLASS_NAMES_OUT.write_text(
         json.dumps({"class_names": class_names}, indent=2), encoding="utf-8"
     )
-    print(f"[train_objects] Class names → {CLASS_NAMES_OUT}")
+    print(f"[train_objects] Class names -> {CLASS_NAMES_OUT}")
     print("[train_objects] Done.")
+
+
+def _train_kaggle():
+    root = _download_kaggle_dataset()
+    images_dir = _find_image_classification_root(root)
+    _train_from_images_dir(images_dir)
 
 
 def _train_pickle():
     import tensorflow as tf  # noqa: PLC0415
     import cv2  # noqa: PLC0415
 
-    print("[train_objects] Loading X, y from pickle…")
+    print("[train_objects] Loading X, y from pickle...")
     X, y, class_names, num_classes = _load_xy_pickle()
     print(f"         X {X.shape}  classes={num_classes}")
 
@@ -317,7 +400,7 @@ def _train_pickle():
         ),
     ]
 
-    print("[train_objects] Training…")
+    print("[train_objects] Training...")
     model.fit(
         X_train,
         y_train,
@@ -328,7 +411,7 @@ def _train_pickle():
         verbose=1,
     )
 
-    print("[train_objects] Fine-tuning…")
+    print("[train_objects] Fine-tuning...")
     base.trainable = True
     for layer in base.layers[:-24]:
         layer.trainable = False
@@ -352,30 +435,55 @@ def _train_pickle():
     keras_path = MODEL_OUT.with_name("objects_model.keras")
     MODEL_OUT.parent.mkdir(parents=True, exist_ok=True)
     model.save(keras_path)
-    print(f"[train_objects] Keras → {keras_path}")
+    print(f"[train_objects] Keras -> {keras_path}")
     export_tflite(model)
 
     CLASS_NAMES_OUT.write_text(
         json.dumps({"class_names": class_names}, indent=2), encoding="utf-8"
     )
-    print(f"[train_objects] Class names → {CLASS_NAMES_OUT}")
+    print(f"[train_objects] Class names -> {CLASS_NAMES_OUT}")
     print("[train_objects] Done.")
 
 
 def main():
-    p = argparse.ArgumentParser(description="Train objects/laptop classifier to TFLite")
+    p = argparse.ArgumentParser(
+        description="Train objects/laptop classifier to TFLite",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=(
+            "For --source folder: pass the REAL path to your `train` folder (class subfolders inside).\n"
+            "  Windows: in File Explorer, open that folder, click the address bar, copy path, then:\n"
+            '  python train_objects.py --source folder --data-dir "C:\\Users\\You\\Downloads\\Project\\train"'
+        ),
+    )
     p.add_argument(
         "--source",
-        choices=("kaggle", "pickle"),
+        choices=("kaggle", "pickle", "folder"),
         default="kaggle",
-        help="kaggle = sugxm00/laptop-dataset via kagglehub; pickle = X.pickle/y.pickle",
+        help="kaggle = sugxm00/laptop-dataset; pickle = X.pickle/y.pickle; folder = --data-dir class subfolders",
+    )
+    p.add_argument(
+        "--data-dir",
+        type=Path,
+        default=None,
+        help="Required for --source folder: directory with one subfolder per class (e.g. Roboflow train/)",
     )
     args = p.parse_args()
 
     if args.source == "kaggle":
         _train_kaggle()
-    else:
+    elif args.source == "pickle":
         _train_pickle()
+    else:
+        if args.data_dir is None:
+            p.error("--data-dir is required when --source folder")
+        raw_dir = str(args.data_dir)
+        if _looks_like_doc_placeholder_path(raw_dir):
+            p.error(
+                "That --data-dir is still placeholder text (e.g. THE_PATH_YOU_COPIED), not a real folder. "
+                "In File Explorer open your dataset `train` folder, click the address bar, copy the whole path, "
+                "and paste only that inside the quotes. Run: python train_objects.py --help"
+            )
+        _train_from_images_dir(args.data_dir)
 
 
 if __name__ == "__main__":
