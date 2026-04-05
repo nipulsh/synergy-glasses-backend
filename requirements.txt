@@ -1,11 +1,8 @@
 fastapi>=0.115
 uvicorn[standard]>=0.30
+python-dotenv>=1.0
 numpy>=1.26
 opencv-python-headless>=4.9
 pydantic>=2.6
 python-multipart>=0.0.9
-# TFLite (optional): `pip install tflite-runtime` on Python 3.10–3.12 if you add models/model.tflite.
-# Python 3.13+ often has no wheel — inference.py falls back to OpenCV Sobel without it.
-#
-# Roboflow inference-sdk: not a core dependency. It does not support Python 3.13 yet
-# (pip: "No matching distribution"). Use `requirements-inference-sdk.txt` inside a 3.12 venv.
+# Roboflow workflows: HTTP client in roboflow_workflow.py (no inference-sdk; supports Python 3.13+).

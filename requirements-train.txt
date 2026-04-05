@@ -1,5 +1,0 @@
-# Training-only deps (not needed for the FastAPI Docker image).
-# pip install -r requirements-train.txt
-# Scripts: train.py (distance), train_brightness.py (screen/ambient ML), train_objects.py (Kaggle laptop)
-tensorflow>=2.16
-kagglehub>=0.3.0

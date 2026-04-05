@@ -1,62 +1,37 @@
-"""
-Dataset management for training data collection.
+"""Save labeled grayscale frames for training datasets."""
 
-Saves labeled frames to:  backend/dataset/{label_cm}cm/{timestamp}.jpg
-"""
-
-from __future__ import annotations
-
-import cv2
-import numpy as np
-from datetime import datetime, timezone
+import time
 from pathlib import Path
 
-DATASET_DIR = Path(__file__).parent / "dataset"
+import numpy as np
+
+DATASET_ROOT = Path(__file__).resolve().parent / "dataset"
+
+
+def _class_for_distance(distance_cm: float) -> str:
+    if distance_cm < 35.0:
+        return "too_close"
+    if distance_cm > 65.0:
+        return "far"
+    return "ok"
 
 
 def save_frame(frame: np.ndarray, distance_cm: float) -> dict:
-    """
-    Save a grayscale frame with its distance label.
-
-    Args:
-        frame:       H×W uint8 grayscale numpy array (typically 60×80).
-        distance_cm: True distance from user's eyes to screen in centimetres.
-
-    Returns:
-        {"path": str, "label_cm": int, "total_in_class": int}
-    """
-    # Round to nearest 5 cm bin so labels stay clean
-    label = int(round(distance_cm / 5.0) * 5)
-    out_dir = DATASET_DIR / f"{label}cm"
+    label = _class_for_distance(distance_cm)
+    out_dir = DATASET_ROOT / label
     out_dir.mkdir(parents=True, exist_ok=True)
-
-    ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S_%f")
-    out_path = out_dir / f"{ts}.jpg"
-
-    # Upscale to 160×120 before saving (better quality for training)
-    big = cv2.resize(frame, (160, 120), interpolation=cv2.INTER_LINEAR)
-    cv2.imwrite(str(out_path), big, [cv2.IMWRITE_JPEG_QUALITY, 90])
-
-    total = len(list(out_dir.glob("*.jpg")))
-    return {
-        "path": str(out_path.relative_to(Path(__file__).parent)),
-        "label_cm": label,
-        "total_in_class": total,
-    }
+    ts = int(time.time() * 1000)
+    path = out_dir / f"frame_{ts}.raw"
+    path.write_bytes(frame.tobytes(order="C"))
+    return {"status": "saved", "class": label, "path": str(path)}
 
 
 def get_stats() -> dict:
-    """Return dataset statistics."""
-    if not DATASET_DIR.exists():
-        return {"total_frames": 0, "classes": {}}
-
-    classes: dict[str, int] = {}
-    total = 0
-    for label_dir in sorted(DATASET_DIR.iterdir()):
-        if not label_dir.is_dir():
-            continue
-        count = len(list(label_dir.glob("*.jpg")))
-        classes[label_dir.name] = count
-        total += count
-
-    return {"total_frames": total, "classes": classes}
+    counts: dict[str, int] = {"too_close": 0, "ok": 0, "far": 0}
+    if not DATASET_ROOT.is_dir():
+        return counts
+    for name in counts:
+        d = DATASET_ROOT / name
+        if d.is_dir():
+            counts[name] = sum(1 for p in d.iterdir() if p.is_file())
+    return counts

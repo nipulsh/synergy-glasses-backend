@@ -1,13 +1,4 @@
-# Roboflow inference-sdk (optional). Used when LAPTOP_USE_ROBOFLOW_WORKFLOW=1 (see roboflow_workflow.py).
-#
-# Pip shows "No matching distribution" on Python 3.13+ because published wheels
-# declare Requires-Python <3.13. Use a 3.12 (or 3.11) venv, then:
-#
-#   py -3.12 -m venv .venv-inference
-#   .venv-inference\Scripts\activate
-#   pip install -U pip
-#   pip install -r requirements-inference-sdk.txt
-#
-# Linux/macOS: python3.12 -m venv .venv-inference && source .venv-inference/bin/activate
-
-inference-sdk>=0.55
+# Same runtime deps as the app. Roboflow is called over HTTP (stdlib); no inference-sdk needed.
+# inference-sdk does not publish wheels for Python 3.13+ as of early 2026.
+# Optional on Python 3.9–3.12 only: pip install inference-sdk
+-r requirements.txt
