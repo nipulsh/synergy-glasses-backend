@@ -6,6 +6,8 @@ import os
 import cv2
 import numpy as np
 
+import frame_codec
+
 DISTANCE_D_REF = float(os.environ.get("DISTANCE_D_REF", "60.0"))
 DISTANCE_REF_RATIO_PCT = float(os.environ.get("DISTANCE_REF_RATIO_PCT", "25.0"))
 DISTANCE_MIN_RATIO_PCT = float(os.environ.get("DISTANCE_MIN_RATIO_PCT", "0.5"))
@@ -35,7 +37,7 @@ def find_largest_bright_bbox(
 ) -> tuple[int, int, int, int, float, float] | None:
     if frame.size == 0 or width <= 0 or height <= 0:
         return None
-    gray = frame.reshape((height, width)) if frame.ndim == 1 else frame
+    gray = frame_codec.as_gray(frame, width, height)
     blurred = cv2.GaussianBlur(gray, (5, 5), 0)
     _, binary = cv2.threshold(blurred, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
     fg_m = binary > 0

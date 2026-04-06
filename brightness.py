@@ -2,6 +2,8 @@
 
 import numpy as np
 
+import frame_codec
+
 
 def _mean_uint8_to_pct(mean_val: float) -> float:
     return float(mean_val / 255.0 * 100.0)
@@ -10,7 +12,7 @@ def _mean_uint8_to_pct(mean_val: float) -> float:
 def analyze_brightness_bbox(
     frame: np.ndarray, x: int, y: int, bw: int, bh: int, width: int, height: int
 ) -> dict:
-    gray = frame.reshape((height, width)) if frame.ndim == 1 else frame
+    gray = frame_codec.as_gray(frame, width, height)
     h, w = gray.shape[:2]
     x0 = max(0, min(x, w - 1))
     y0 = max(0, min(y, h - 1))

@@ -6,3 +6,4 @@ opencv-python-headless>=4.9
 pydantic>=2.6
 python-multipart>=0.0.9
 # Roboflow workflows: HTTP client in roboflow_workflow.py (no inference-sdk; supports Python 3.13+).
+openai>=1.0

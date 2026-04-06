@@ -11,6 +11,8 @@ from urllib.parse import quote
 import cv2
 import numpy as np
 
+import frame_codec
+
 _LABEL_KEYS = ("class", "class_name", "label", "predicted_class", "top", "detection_class")
 _CONF_KEYS = ("confidence", "score", "probability")
 
@@ -257,8 +259,7 @@ def try_predict_for_gate(frame: np.ndarray, width: int, height: int) -> dict | N
         workspace = os.environ.get("ROBOFLOW_WORKSPACE", "").strip()
         workflow_id = os.environ.get("ROBOFLOW_WORKFLOW_ID", "").strip()
         image_key = os.environ.get("ROBOFLOW_WORKFLOW_IMAGE_KEY", "image").strip() or "image"
-        gray = frame.reshape((height, width)) if frame.ndim == 1 else frame
-        bgr = cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR)
+        bgr = frame_codec.as_bgr(frame, width, height)
         raw = _run_workflow_http(
             bgr,
             api_url=api_url,

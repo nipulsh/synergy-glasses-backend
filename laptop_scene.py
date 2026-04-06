@@ -5,6 +5,7 @@ import os
 import numpy as np
 
 import brightness
+import frame_codec
 import roboflow_workflow
 import screen_distance
 import temporal_smoothing
@@ -28,7 +29,7 @@ def _cref_from_aspect(bw: int, bh: int) -> float:
 def _resolve_laptop_roi(
     frame: np.ndarray, width: int, height: int, det: dict
 ) -> tuple[int, int, int, int, float, float, str] | None:
-    gray = frame.reshape((height, width)) if frame.ndim == 1 else frame
+    gray = frame_codec.as_gray(frame, width, height)
     bbox = det.get("bbox")
     source = det.get("source", "")
     if isinstance(bbox, dict) and source == "roboflow_workflow":
