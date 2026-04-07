@@ -1,9 +1,13 @@
 """OcuSmart Distance API — FastAPI backend for smart-glasses eye-health monitoring."""
 
 from contextlib import asynccontextmanager
+from pathlib import Path
+
 from dotenv import load_dotenv
 
-load_dotenv()
+# Load `.env` from this file's directory — not CWD — so uvicorn/ngrok work when started elsewhere.
+_ENV_FILE = Path(__file__).resolve().parent / ".env"
+load_dotenv(_ENV_FILE, encoding="utf-8-sig")
 
 import asyncio
 import base64
@@ -73,6 +77,10 @@ def _run_openai_analysis(frame: np.ndarray, meta: dict[str, Any]) -> dict | None
     width = int(meta["width"])
     height = int(meta["height"])
     if openai_screen.api_key() is None:
+        print(
+            "[analysis] OpenAI skipped: no API key (check .env next to main.py: OPENAI_API_KEY or OPEN_AI_API_KEY)",
+            flush=True,
+        )
         return None
     try:
         oai = openai_screen.analyze_frame(frame, width, height)
@@ -150,6 +158,11 @@ def _log_post_routes_with_substr(app: FastAPI, needle: str) -> None:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     _log_post_routes_with_substr(app, "analyze")
+    print(
+        f"[startup] env file: {_ENV_FILE} (exists={_ENV_FILE.is_file()}), "
+        f"OpenAI key={'set' if openai_screen.api_key() else 'MISSING — set OPENAI_API_KEY or OPEN_AI_API_KEY'}",
+        flush=True,
+    )
     task = asyncio.create_task(_analysis_loop())
     yield
     task.cancel()
@@ -202,7 +215,7 @@ def root() -> dict:
         },
         "post_json": {
             "frame_upload": "/api/frame or /api/analyze",
-            "openai_vision": "/api/openai-frame (same body; needs OPEN_AI_API_KEY)",
+            "openai_vision": "/api/openai-frame (same body; needs OPENAI_API_KEY or OPEN_AI_API_KEY in .env)",
             "body": {"frame": "base64", "width": 80, "height": 60},
             "bytes": "width*height (gray) or width*height*2 (RGB565 LE)",
         },
@@ -255,6 +268,11 @@ def _handle_frame_request(body: FrameRequest) -> dict:
         out.update(oai_result)
     else:
         out["analysis_ready"] = False
+        out["openai_skipped_reason"] = (
+            "no_api_key"
+            if openai_screen.api_key() is None
+            else "openai_error"
+        )
 
     return out
 
