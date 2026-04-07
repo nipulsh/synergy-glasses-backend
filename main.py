@@ -75,7 +75,7 @@ def _brightness_alert(contrast: float) -> str:
 
 
 def _synthetic_latest_result() -> dict[str, Any]:
-    """Plausible metrics when no frame is in flight (UI / polling demos). Not from vision."""
+    """Plausible metrics when no completed analysis is stored (UI polling without POST / frame). Not from vision."""
     distance_cm = round(random.uniform(15.0, 110.0), 1)
     category = screen_distance.category_from_distance_cm(distance_cm)
     screen_br = round(random.uniform(5.0, 40.0), 2)
@@ -104,7 +104,7 @@ def _synthetic_latest_result() -> dict[str, Any]:
         "detection_source": "synthetic_no_frame",
         "detection_reliable": conf >= 0.35,
         "openai_confidence": conf,
-        "brief_notes": "No live frame; synthetic values for client polling.",
+        "brief_notes": "Synthetic placeholder until a real analysis is stored.",
         "openai_model": "",
     }
 
@@ -352,22 +352,7 @@ def get_latest_result() -> dict:
     with _result_lock:
         if _latest_result is not None:
             return dict(_latest_result)
-    with _frame_lock:
-        has_frame = _latest_frame is not None
-    if not has_frame:
-        return _synthetic_latest_result()
-    return {
-        "status": "pending",
-        "analysis_ready": False,
-        "distance_cm": None,
-        "distanceCm": None,
-        "screenBr": None,
-        "ambientBr": None,
-        "screenBrightness": None,
-        "ambientBrightness": None,
-        "contrast": None,
-        "brightnessDifference": None,
-    }
+    return _synthetic_latest_result()
 
 
 @app.get("/api/health")
