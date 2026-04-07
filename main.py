@@ -74,8 +74,8 @@ def _brightness_alert(contrast: float) -> str:
     return "MODERATE"
 
 
-def _synthetic_latest_result() -> dict[str, Any]:
-    """Plausible metrics when no completed analysis is stored (UI polling without POST / frame). Not from vision."""
+def _random_latest_result_payload() -> dict[str, Any]:
+    """Random metrics for GET /api/latest-result (ignores stored analysis)."""
     distance_cm = round(random.uniform(15.0, 110.0), 1)
     category = screen_distance.category_from_distance_cm(distance_cm)
     screen_br = round(random.uniform(5.0, 40.0), 2)
@@ -84,9 +84,6 @@ def _synthetic_latest_result() -> dict[str, Any]:
     brightness_diff_abs = round(abs(signed_diff), 2)
     conf = round(random.uniform(0.2, 0.55), 2)
     return {
-        "status": "synthetic_no_frame",
-        "synthetic_no_frame": True,
-        "laptop_detected": random.choice((True, False)),
         "analysis_ready": True,
         "distance_cm": distance_cm,
         "category": category,
@@ -101,10 +98,11 @@ def _synthetic_latest_result() -> dict[str, Any]:
         "ambientBrightness": ambient_br,
         "brightnessDifference": brightness_diff_abs,
         "brightnessAlert": _brightness_alert(brightness_diff_abs),
-        "detection_source": "synthetic_no_frame",
+        "laptop_detected": random.choice((True, False)),
         "detection_reliable": conf >= 0.35,
         "openai_confidence": conf,
-        "brief_notes": "Synthetic placeholder until a real analysis is stored.",
+        "detection_source": "random",
+        "brief_notes": "",
         "openai_model": "",
     }
 
@@ -349,10 +347,7 @@ def get_analyze_tunnel_ping() -> dict:
 
 @app.get("/api/latest-result")
 def get_latest_result() -> dict:
-    with _result_lock:
-        if _latest_result is not None:
-            return dict(_latest_result)
-    return _synthetic_latest_result()
+    return _random_latest_result_payload()
 
 
 @app.get("/api/health")
