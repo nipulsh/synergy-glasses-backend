@@ -74,8 +74,8 @@ def _brightness_alert(contrast: float) -> str:
     return "MODERATE"
 
 
-def _random_latest_result_payload() -> dict[str, Any]:
-    """Random metrics for GET /api/latest-result (ignores stored analysis)."""
+def _synthetic_latest_result() -> dict[str, Any]:
+    """Plausible metrics when no frame is in flight (UI / polling demos). Not from vision."""
     distance_cm = round(random.uniform(15.0, 110.0), 1)
     category = screen_distance.category_from_distance_cm(distance_cm)
     screen_br = round(random.uniform(5.0, 40.0), 2)
@@ -84,6 +84,9 @@ def _random_latest_result_payload() -> dict[str, Any]:
     brightness_diff_abs = round(abs(signed_diff), 2)
     conf = round(random.uniform(0.2, 0.55), 2)
     return {
+        "status": "synthetic_no_frame",
+        "synthetic_no_frame": True,
+        "laptop_detected": random.choice((True, False)),
         "analysis_ready": True,
         "distance_cm": distance_cm,
         "category": category,
@@ -98,11 +101,10 @@ def _random_latest_result_payload() -> dict[str, Any]:
         "ambientBrightness": ambient_br,
         "brightnessDifference": brightness_diff_abs,
         "brightnessAlert": _brightness_alert(brightness_diff_abs),
-        "laptop_detected": random.choice((True, False)),
+        "detection_source": "synthetic_no_frame",
         "detection_reliable": conf >= 0.35,
         "openai_confidence": conf,
-        "detection_source": "random",
-        "brief_notes": "",
+        "brief_notes": "No live frame; synthetic values for client polling.",
         "openai_model": "",
     }
 
@@ -347,7 +349,25 @@ def get_analyze_tunnel_ping() -> dict:
 
 @app.get("/api/latest-result")
 def get_latest_result() -> dict:
-    return _random_latest_result_payload()
+    with _result_lock:
+        if _latest_result is not None:
+            return dict(_latest_result)
+    with _frame_lock:
+        has_frame = _latest_frame is not None
+    if not has_frame:
+        return _synthetic_latest_result()
+    return {
+        "status": "pending",
+        "analysis_ready": False,
+        "distance_cm": None,
+        "distanceCm": None,
+        "screenBr": None,
+        "ambientBr": None,
+        "screenBrightness": None,
+        "ambientBrightness": None,
+        "contrast": None,
+        "brightnessDifference": None,
+    }
 
 
 @app.get("/api/health")

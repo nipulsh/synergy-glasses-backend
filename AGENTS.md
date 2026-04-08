@@ -12,7 +12,7 @@
 - The Roboflow laptop gate is on when `ROBOFLOW_API_KEY`, `ROBOFLOW_WORKSPACE`, and `ROBOFLOW_WORKFLOW_ID` are set, unless `LAPTOP_USE_ROBOFLOW_WORKFLOW` explicitly opts out.
 - In `laptop_scene.py`, the TFLite laptop-detection branch for the gate path is commented out (Roboflow-only for that path); other TFLite endpoints may remain for objects, etc.
 - Glasses frames are saved under `images/glasses/`; `/api/collect` writes to `images/too_close`, `images/ok`, and `images/far`; `images/` is gitignored.
-- Typical glasses resolution from firmware is 80×60 (RGB565 on the wire); other `width`/`height` are allowed if the payload length matches.
+- Typical glasses frame from current firmware (`script.cpp`) is **80×60 grayscale** over BLE (**4800** bytes); **9600** bytes means RGB565 LE per `frame_codec.py`. Other `width`/`height` are allowed if the payload length matches.
 - `POST /api/openai-frame` sends the frame image to OpenAI Vision (requires `OPENAI_API_KEY` or legacy `OPEN_AI_API_KEY`); returns screen vs environment brightness estimates and `distance_cm`. Server logs a one-line summary to the console.
-- ESP32 firmware (`script.cpp`) streams frames over BLE to the phone only; it does not call the HTTP API. The mobile app must reassemble NOTIFY chunks (9600-byte RGB565 frames) and POST to the backend.
+- ESP32 firmware (`script.cpp`) streams frames over BLE to the phone only; it does not call the HTTP API. The mobile app must reassemble NOTIFY chunks (**4800-byte grayscale** or **9600-byte RGB565**, depending on firmware) and POST to the backend.
 - For `*.ngrok-free.dev` / `*.ngrok-free.app`, non-browser HTTP clients usually need header `ngrok-skip-browser-warning` (any value) or a custom `User-Agent`; otherwise the ngrok interstitial HTML is returned instead of JSON.

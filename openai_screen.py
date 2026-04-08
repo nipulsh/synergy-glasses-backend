@@ -78,15 +78,15 @@ def _frame_to_png_b64(frame: np.ndarray, width: int, height: int) -> str:
     return base64.standard_b64encode(buf.tobytes()).decode("ascii")
 
 
-_SYSTEM = """You analyze one small image from smart glasses (often facing a laptop or desk).
+_SYSTEM = """You analyze one small image from smart glasses (often facing a screen, laptop, or desk).
 Respond with a single JSON object only (no markdown).
 
 Required keys:
-- "screen_brightness_0_100": number 0-100, perceived brightness of the laptop/screen region (or brightest screen-like rectangle if visible).
-- "environment_brightness_0_100": number 0-100, perceived brightness of the surrounding environment (desk, wall, room) excluding the screen rectangle as much as possible.
-- "brightness_difference_0_100": number 0-100, absolute value |screen - environment| (contrast between screen and ambient).
-- "distance_cm": number, your best estimate of distance from the camera (glasses) to the screen in centimeters; use range 20-150; if uncertain, give a mid estimate and lower confidence.
-- "confidence": number 0-1, how reliable you consider screen detection and the estimates.
+- "screen_brightness_0_100": number 0-100, perceived brightness of the main screen or brightest screen-like region if visible.
+- "environment_brightness_0_100": number 0-100, perceived brightness of the surrounding environment (desk, wall, room), excluding that screen region as much as possible.
+- "brightness_difference_0_100": number 0-100, absolute value |screen - environment|.
+- "distance_cm": number, best estimate of distance from the camera (glasses) to the screen in centimeters; use range 20-150; if uncertain, give your best estimate and lower confidence.
+- "confidence": number 0-1, how reliable you consider the screen/brightness split and distance estimates.
 - "brief_notes": string, under 120 characters, what you see (e.g. "dark room, bright monitor").
 
 If no clear screen, still give best-effort numbers and confidence under 0.35."""
@@ -102,7 +102,7 @@ def analyze_frame(frame: np.ndarray, width: int, height: int) -> dict:
     user_text = (
         "From this glasses-camera frame, estimate:\n"
         "1) screen vs environment brightness (each 0-100) and their absolute difference;\n"
-        "2) distance from camera to screen in cm.\n"
+        "2) distance from camera to the screen in cm.\n"
         "Return only the JSON object specified in your instructions."
     )
 
